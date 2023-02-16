@@ -27,8 +27,8 @@ import Data.Kind -- Type = (*)
 
 class OfKindType a
 
-instance OfKindType  Bool
-instance OfKindType  String         -- Which extension did we need
+instance OfKindType Bool
+instance OfKindType String          -- Which extension did we need
 instance OfKindType (Maybe (IO ())) -- to get /these/ to compile?
 
 {-
