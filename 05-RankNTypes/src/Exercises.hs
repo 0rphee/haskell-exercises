@@ -2,9 +2,11 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE GADTs          #-}
 {-# LANGUAGE RankNTypes     #-}
+{-# LANGUAGE LambdaCase #-}
 module Exercises where
 
 import Data.Kind (Type)
+import Data.Maybe (fromMaybe)
 
 
 
@@ -20,8 +22,9 @@ data Exlistential where
 
 -- | a. Write a function to "unpack" this exlistential into a list.
 
--- unpackExlistential :: Exlistential -> (forall a. a -> r) -> [r]
--- unpackExlistential = error "Implement me!"
+unpackExlistential :: Exlistential -> (forall a. a -> r) -> [r]
+unpackExlistential Nil _ = []
+unpackExlistential (Cons x xs) f = f x : unpackExlistential xs f
 
 -- | b. Regardless of which type @r@ actually is, what can we say about the
 -- values in the resulting list?
@@ -42,14 +45,18 @@ data CanFold a where
 
 -- | a. The following function unpacks a 'CanFold'. What is its type?
 
--- unpackCanFold :: ???
--- unpackCanFold f (CanFold x) = f x
+unpackCanFold :: (forall f. Foldable f => f a -> b ) -> CanFold a -> b
+unpackCanFold f (CanFold x) = f x
 
 -- | b. Can we use 'unpackCanFold' to figure out if a 'CanFold' is "empty"?
 -- Could we write @length :: CanFold a -> Int@? If so, write it!
 
--- | c. Write a 'Foldable' instance for 'CanFold'. Don't overthink it.
+length' :: CanFold a -> Int
+length' (CanFold x) = foldl (\x _ -> x + 1 ) 0 x
 
+-- | c. Write a 'Foldable' instance for 'CanFold'. Don't overthink it.
+instance Foldable CanFold where
+  foldMap f (CanFold x) = foldMap f x
 
 
 
@@ -63,15 +70,26 @@ data EqPair where
 
 -- | a. Write a function that "unpacks" an 'EqPair' by applying a user-supplied
 -- function to its pair of values in the existential type.
+unpackEqPair :: (forall a b. Eq a => a -> a -> b) -> EqPair -> b
+unpackEqPair f (EqPair a b) = f a b
 
 -- | b. Write a function that takes a list of 'EqPair's and filters it
 -- according to some predicate on the unpacked values.
+
+filterEQPairList ::  (forall a b. Eq a => a -> a -> b) -> [EqPair] -> [EqPair]
+filterEQPairList _ [] = []
+filterEQPairList f ( x : xs)
+  = if unpackEqPair f x
+    then x : filterEQPairList f xs
+    else filterEQPairList f xs
+
 
 -- | c. Write a function that unpacks /two/ 'EqPair's. Now that both our
 -- variables are in rank-2 position, can we compare values from different
 -- pairs?
 
-
+unpackEqPairs :: (forall a r. Eq a => a -> a -> r) -> EqPair -> EqPair -> (r, r)
+unpackEqPairs f a b = (unpackEqPair f a, unpackEqPair f b)
 
 
 
@@ -97,10 +115,14 @@ data Nested input output subinput suboutput
 -- | a. Write a GADT to existentialise @subinput@ and @suboutput@.
 
 data NestedX input output where
+  Nest :: Nested input output subinput suboutput -> NestedX input output
   -- ...
 
 -- | b. Write a function to "unpack" a NestedX. The user is going to have to
 -- deal with all possible @subinput@ and @suboutput@ types.
+unpackN :: (forall subinput suboutput. Nested input output subinput suboutput -> r) -> NestedX input output -> r
+unpackN f (Nest a) = f a
+
 
 -- | c. Why might we want to existentialise the subtypes away? What do we lose
 -- by doing so? What do we gain?
@@ -127,17 +149,25 @@ data FirstGo input output
 -- a 'Maybe'! Let's avoid this by splitting this sum type into separate types:
 
 data Text = Text String
+
 -- data HTML = HTML { properties :: (String, String), children :: ??? }
 
 -- | Uh oh! What's the type of our children? It could be either! In fact, it
 -- could probably be anything that implements the following class, allowing us
 -- to render our DSL to an HTML string:
-class Renderable component where render :: component -> String
+class Renderable component where
+  render :: component -> String
 
 -- | a. Write a type for the children.
+data Child where
+  Child :: Renderable a => a -> Child
+
+data HTML = HTML { properties :: (String, String), children :: [Child] }
 
 -- | b. What I'd really like to do when rendering is 'fmap' over the children
 -- with 'render'; what's stopping me? Fix it!
+instance Renderable Child where
+  render (Child x) = render x
 
 -- | c. Now that we're an established Haskell shop, we would /also/ like the
 -- option to render our HTML to a Shakespeare template to write to a file
@@ -160,21 +190,31 @@ data MysteryBox a where
 
 -- | a. Knowing what we now know about RankNTypes, we can write an 'unwrap'
 -- function! Write the function, and don't be too upset if we need a 'Maybe'.
+unwrapM :: MysteryBox a -> (forall a. MysteryBox a -> r) -> Maybe r
+unwrapM m f = case m of
+  EmptyBox -> Nothing
+  IntBox _ a -> Just $ f a
+  StringBox _ a -> Just $ f a
+  BoolBox _ a -> Just $ f a
 
 -- | b. Why do we need a 'Maybe'? What can we still not know?
 
 -- | c. Write a function that uses 'unwrap' to print the name of the next
 -- layer's constructor.
 
-
-
+nextLayerName :: MysteryBox a -> String
+nextLayerName m = fromMaybe "No next layer" $ unwrapM m (\case
+  IntBox _ _ -> "EmptyBox"
+  StringBox _ _ -> "IntBox"
+  BoolBox _ _ -> "StringBox"
+  _ -> "No next Layer" )
 
 
 {- SEVEN -}
 
 -- | When we talked about @DataKinds@, we briefly looked at the 'SNat' type:
 
-data Nat = Z | S Nat
+data Nat = Z | S Nat deriving Eq
 
 data SNat (n :: Nat) where
   SZ :: SNat 'Z
@@ -183,7 +223,9 @@ data SNat (n :: Nat) where
 -- | We also saw that we could convert from an 'SNat' to a 'Nat':
 
 toNat :: SNat n -> Nat
-toNat = error "You should already know this one ;)"
+toNat SZ = Z
+toNat (SS xs) = S (toNat xs)
+
 
 -- | How do we go the other way, though? How do we turn a 'Nat' into an 'SNat'?
 -- In the general case, this is impossible: the 'Nat' could be calculated from
@@ -196,10 +238,15 @@ toNat = error "You should already know this one ;)"
 -- then returns an @r@. The successor case is a bit weird here - type holes
 -- will help you!
 
+fromNat :: Nat -> (forall n. SNat n -> r) -> r
+fromNat Z f = f SZ
+fromNat (S xs) f = fromNat xs (f . SS)
+
 -- | If you're looking for a property that you could use to test your function,
 -- remember that @fromNat x toNat === x@!
 
-
+-- a :: Nat -> Bool
+-- a x = fromNat x toNat == x
 
 
 
@@ -210,6 +257,10 @@ toNat = error "You should already know this one ;)"
 data Vector (n :: Nat) (a :: Type) where
   VNil  ::                    Vector  'Z    a
   VCons :: a -> Vector n a -> Vector ('S n) a
+
+filterV :: (a -> Bool) -> Vector n a -> (forall b. Vector b a -> r) -> r
+filterV _ VNil         g = g VNil
+filterV f (VCons x xs) g = filterV f xs (if f x then g . VCons x else g)
 
 -- | It would be nice to have a 'filter' function for vectors, but there's a
 -- problem: we don't know at compile time what the new length of our vector
