@@ -3,10 +3,13 @@
 {-# LANGUAGE PolyKinds     #-}
 {-# LANGUAGE TypeFamilies  #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE BlockArguments #-}
 module Exercises where
 
 import Data.Kind    (Constraint, Type)
 import GHC.TypeLits (Symbol)
+import Data.Maybe (mapMaybe)
 
 
 
@@ -16,7 +19,7 @@ import GHC.TypeLits (Symbol)
 
 -- | Let's look at the following type family to build a constraint:
 
-type family All (c :: Type -> Constraint) (xs :: [Type]) :: Constraint where
+type family All (c :: k -> Constraint) (xs :: [k]) :: Constraint where
   All c '[] = ()
   All c (x ': xs) = (c x, All c xs)
 
@@ -37,7 +40,7 @@ type family All (c :: Type -> Constraint) (xs :: [Type]) :: Constraint where
 -- there are loads, and we just don't want the boilerplate. Luckily for us, we
 -- can introduce this new type:
 
-data Tagged (name :: Symbol) (a :: Type)
+data Tagged (name :: k) (a :: Type)
   = Tagged { runTagged :: a }
 
 -- | 'Tagged' is just like 'Identity', except that it has a type-level string
@@ -58,6 +61,7 @@ f (Tagged x) = putStrLn (show x <> " is important!")
 -- | a. Symbols are all well and good, but wouldn't it be nicer if we could
 -- generalise this?
 
+
 -- | b. Can we generalise 'Type'? If so, how? If not, why not?
 
 -- | c. Often when we use the 'Tagged' type, we prefer a sum type (promoted
@@ -71,7 +75,7 @@ f (Tagged x) = putStrLn (show x <> " is important!")
 
 -- | We can use the following to test type-level equivalence.
 
-data a :=: b where
+data (a :: k0) :=: (b :: k1) :: Type where
   Refl :: a :=: a
 
 -- | a. What do you think the kind of (:=:) is?
@@ -108,7 +112,7 @@ data SBool (b :: Bool) where
   STrue  :: SBool 'True
   SFalse :: SBool 'False
 
--- type instance Sing ...
+type instance Sing (x :: Bool) = SBool x
 
 -- | b. Repeat the process for the @Nat@ kind. Again, if you're on the right
 -- lines, this is very nearly a copy-paste job!
@@ -119,7 +123,7 @@ data SNat (n :: Nat) where
   SZ :: SNat 'Z
   SS :: SNat n -> SNat ('S n)
 
-
+type instance Sing (x :: Nat) = SNat x
 
 
 
@@ -140,19 +144,19 @@ data Strings (n :: Nat) where
 -- n@ and an @SNat n@ into @Sigma Strings@, existentialising the actual length.
 --
 -- @
---   example :: [Sigma Strings]
---   example
---     = [ Sigma         SZ   SNil
---       , Sigma     (SS SZ)  ("hi" :> SNil)
---       , Sigma (SS (SS SZ)) ("hello" :> ("world" :> SNil))
---       ]
+example :: [Sigma Strings]
+example
+  = [ Sigma         SZ   SNil
+    , Sigma     (SS SZ)  ("hi" :> SNil)
+    , Sigma (SS (SS SZ)) ("hello" :> ("world" :> SNil))
+    ]
 -- @
 
 -- | a. Write this type's definition: If you run the above example, the
 -- compiler should do a lot of the work for you...
 
-data Sigma (f :: Nat -> Type) where
-  -- Sigma :: ... -> Sigma f
+data Sigma (f :: k -> Type) :: Type where
+  Sigma :: Sing n -> f n -> Sigma f
 
 -- | b. Surely, by now, you've guessed this question? Why are we restricting
 -- ourselves to 'Nat'? Don't we have some more general way to talk about
@@ -167,6 +171,20 @@ data Vector (a :: Type) (n :: Nat) where -- @n@ and @a@ flipped... Hmm, a clue!
   VCons :: a -> Vector a n -> Vector a ('S n)
 
 
+sigmaV :: Vector a ss -> Sigma (Vector a)
+sigmaV VNil = Sigma SZ VNil
+sigmaV (VCons x xs) = x `consSV` sigmaV xs
+
+consSV :: a -> Sigma (Vector a) -> Sigma (Vector a)
+consSV next (Sigma nat vec) = Sigma  (SS nat) (VCons next vec)
+
+
+filterV :: (a -> Bool) -> Sigma (Vector a) -> Sigma (Vector a)
+filterV _ sVNil@(Sigma _ VNil)        = sVNil
+filterV f (Sigma (SS n) (VCons x xs)) = let tail = filterV f (Sigma n xs)
+                                        in if f x
+                                           then x `consSV` tail
+                                           else tail
 
 
 
@@ -197,16 +215,25 @@ data ServerData
 -- server data.
 
 data Communication (label :: Label) where
+  ClientComm :: ClientData -> Communication Client
+  ServerComm :: ServerData -> Communication Server
   -- {{Fill this space with your academic excellence}}
 
 -- | b. Write a singleton for 'Label'.
+data SLabel (label :: Label) :: Type where
+  SClient :: SLabel Client
+  SServer :: SLabel Server
+
+type instance Sing (x :: Label) = SLabel x
 
 -- | c. Magically, we can now group together blocks of data with differing
 -- labels using @Sigma Communication@, and then pattern-match on the 'Sigma'
 -- constructor to find out which packet we have! Try it:
 
--- serverLog :: [Sigma Communication] -> [ServerData]
--- serverLog = error "YOU CAN DO IT"
+serverLog :: [Sigma Communication] -> [ServerData]
+serverLog = mapMaybe  \case 
+  Sigma SServer (ServerComm r) -> Just r
+  _                            -> Nothing
 
 -- | d. Arguably, in this case, the Sigma type is overkill; what could we have
 -- done, perhaps using methods from previous chapters, to "hide" the label
