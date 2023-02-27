@@ -10,6 +10,9 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE InstanceSigs #-}
+
 module Exercises where
 
 import Data.Kind (Constraint, Type)
@@ -34,14 +37,28 @@ newtype YourInt = YourInt Int
 
 -- | a. Write the class!
 
--- class Newtype ... ... where
---   wrap   :: ...
---   unwrap :: ...
+class Newtype wrapped unwrapped where
+  wrap   :: unwrapped -> wrapped
+  unwrap :: wrapped -> unwrapped
 
 -- | b. Write instances for 'MyInt' and 'YourInt'.
+instance Newtype YourInt Int where
+  wrap             = YourInt
+  unwrap (YourInt i) = i
+
+instance Newtype MyInt Int where
+  wrap             = MyInt
+  unwrap (MyInt i) = i
 
 -- | c. Write a function that adds together two values of the same type,
 -- providing that the type is a newtype around some type with a 'Num' instance.
+
+prevT :: Proxy x -> x -> x
+prevT _ x = x
+
+addition :: (Newtype new old, Num old) => Proxy old -> new -> new -> new
+addition prox x y = wrap $ prevT prox (unwrap x + unwrap y)
+
 
 -- | d. We actually don't need @MultiParamTypeClasses@ for this if we use
 -- @TypeFamilies@. Look at the section on associated type instances here:
@@ -49,8 +66,22 @@ newtype YourInt = YourInt Int
 -- rewrite the class using an associated type, @Old@, to indicate the
 -- "unwrapped" type. What are the signatures of 'wrap' and 'unwrap'?
 
+class NNewtype (new :: Type )where
+  type family Old new :: Type
+
+  unwrapN :: new -> Old new
+  wrapN  :: Old new -> new
 
 
+instance NNewtype YourInt where
+  type instance Old YourInt = Int
+  wrapN = YourInt
+  unwrapN (YourInt i) = i
+
+instance NNewtype MyInt where
+  type instance Old MyInt = Int
+  wrapN = MyInt
+  unwrapN (MyInt i) = i
 
 
 {- TWO -}
@@ -81,14 +112,28 @@ instance Traversable Identity where
 -- | a. Write that little dazzler! What error do we get from GHC? What
 -- extension does it suggest to fix this?
 
--- class Wanderable … … where
---   wander :: … => (a -> f b) -> t a -> f (t b)
+class Wanderable (c :: (Type -> Type) -> Constraint) (t :: Type -> Type )where
+  wander :: c f => (a -> f b) -> t a -> f (t b)
 
 -- | b. Write a 'Wanderable' instance for 'Identity'.
+instance Wanderable Functor Identity where
+  wander f (Identity x) = Identity <$> f x
 
 -- | c. Write 'Wanderable' instances for 'Maybe', '[]', and 'Proxy', noting the
 -- differing constraints required on the @f@ type. '[]' might not work so well,
 -- and we'll look at /why/ in the next part of this question!
+instance Wanderable Applicative Maybe where
+  wander f (Just x) = Just <$> f x
+  wander _ Nothing = pure Nothing
+
+instance c ~ Applicative => Wanderable c ([] :: Type -> Type) where
+  wander :: c f => (a -> f b) -> [a] -> f [b]
+  wander _ [] = pure []
+  wander f (x:xs) = (:) <$> f x <*> wander f xs
+
+instance Wanderable Applicative Proxy where
+  wander _ Proxy = pure Proxy
+
 
 -- | d. Assuming you turned on the extension suggested by GHC, why does the
 -- following produce an error? Using only the extensions we've seen so far, how
@@ -97,7 +142,7 @@ instance Traversable Identity where
 -- we'll see in later chapters that there are neater solutions to this
 -- problem!)
 
--- test = wander Just [1, 2, 3]
+test = wander Just [1, 2, 3]
 
 
 
@@ -124,11 +169,22 @@ data Fin (limit :: Nat) where
 
 class (x :: Nat) < (y :: Nat) where
   convert :: SNat x -> Fin y
+  inconvert :: Fin y -> Maybe (SNat x)
 
 -- | a. Write the instance that says @Z@ is smaller than @S n@ for /any/ @n@.
+instance Z < S n where
+  convert _ = FZ
+
+  inconvert FZ = Just SZ
+  inconvert (FS _) = Nothing
 
 -- | b. Write an instance that says, if @x@ is smaller than @y@, then @S x@ is
 -- smaller than @S y@.
+instance x < y => S x < S y where
+  convert (SS xs) = FS (convert xs)
+
+  inconvert FZ = Nothing
+  inconvert (FS xs) = fmap SS (inconvert xs)
 
 -- | c. Write the inverse function for the class definition and its two
 -- instances.
@@ -144,8 +200,14 @@ class (x :: Nat) < (y :: Nat) where
 -- instance.
 
 -- | a. Write that typeclass!
+class a ~~ b where
+  lr :: a -> b
+  rl :: b -> a
 
 -- | b. Write that instance!
+instance a ~~ a where
+  lr x = x
+  rl x = x
 
 -- | c. When GHC sees @x ~ y@, it can apply anything it knows about @x@ to @y@,
 -- and vice versa. We don't have the same luxury with /our/ class, however –
@@ -167,6 +229,8 @@ class (x :: Nat) < (y :: Nat) where
 -- | It wouldn't be a proper chapter without an @HList@, would it?
 
 data HList (xs :: [Type]) where
+  HNil :: HList '[]
+  HCons :: a -> HList xs -> HList (a:xs)
   -- In fact, you know what? You can definitely write an HList by now – I'll
   -- just put my feet up and wait here until you're done!
 
@@ -177,12 +241,21 @@ class HTake (n :: Nat) (xs :: [Type]) (ys :: [Type]) where
   htake :: SNat n -> HList xs -> HList ys
 
 -- | a. Write an instance for taking 0 elements.
+instance  HTake Z xs xs where
+  htake :: SNat Z -> HList xs -> HList xs
+  htake _ xs = xs
 
 -- | b. Write an instance for taking a non-zero number. You "may" need a
 -- constraint on this instance.
 
+  
+instance HTake n xs ys => HTake ('S n) (x ': xs) (x ': ys) where
+  htake (SS n) (HCons x xs) = HCons x (htake n xs)
+
 -- | c. What case have we forgotten? How might we handle it?
 
+instance HTake n '[] '[] where
+  htake _ _ = HNil
 
 
 
@@ -196,7 +269,14 @@ class Pluck (x :: Type) (xs :: [Type]) where
 
 -- | a. Write an instance for when the head of @xs@ is equal to @x@.
 
+instance Pluck x (x:xs) where
+  pluck (HCons x _) = x 
+
+
 -- | b. Write an instance for when the head /isn't/ equal to @x@.
+instance {-# INCOHERENT #-} Pluck x ys =>  Pluck x (y:ys) where
+  pluck (HCons _ ys) = pluck ys
+
 
 -- | c. Using [the documentation for user-defined type
 -- errors](http://hackage.haskell.org/package/base-4.11.1.0/docs/GHC-TypeLits.html#g:4)
