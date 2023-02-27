@@ -23,7 +23,7 @@ import qualified GHC.Generics as G
 
 -- | Recall an old friend, the 'Newtype' class:
 
-class Newtype (new :: Type) (old :: Type) where
+class Newtype (new :: Type) (old :: Type) | new -> old where
   wrap   :: old -> new
   unwrap :: new -> old
 
@@ -40,9 +40,9 @@ class Newtype (new :: Type) (old :: Type) where
 -- | Let's go back to a problem we had in the last exercise, and imagine a very
 -- simple cache in IO. Uncomment the following:
 
--- class CanCache (entity :: Type) (index :: Type) where
---   store :: entity -> IO ()
---   load  :: index -> IO (Maybe entity)
+class Functor f => CanCache (f :: Type -> Type) (entity :: Type) (index :: Type) | entity -> index where
+  store :: entity -> f ()
+  load  :: index -> f (Maybe entity)
 
 -- | a. Uh oh - there's already a problem! Any @entity@ type should have a
 -- fixed type of id/@index@, though... if only we could convince GHC... Could
@@ -79,7 +79,8 @@ type family Add' (x :: Nat) (y :: Nat)    :: Nat
 -- | a. Write the two required instances for the 'Add' class by
 -- pattern-matching on the first argument. Remember that instances can have
 -- constraints, and this is how we do recursion!
-
+instance Add Z x x
+instance Add x y z => Add (S x) y (S z)
 -- | b. By our analogy, a type family has only "one functional dependency" -
 -- all its inputs to its one output. Can we write _more_ functional
 -- dependencies for @Add@? Aside from @x y -> z@? 
@@ -100,7 +101,7 @@ data Proxy (a :: k) = Proxy
 -- because the names of types are far too confusing. To that end, we can give
 -- our types friendlier names to make the coding experience less intimidating:
 
-class (x :: k) `IsNamed` (label :: Symbol) where
+class (x :: k) `IsNamed` (label :: Symbol) | x -> label, label -> x where
   fromName :: Proxy x     -> Proxy label
   fromName _ = Proxy
 
@@ -118,6 +119,8 @@ instance Float `IsNamed` "Kenneth"
 -- Is there a way to get GHC to help us uphold the law?
 
 -- | b. Write the identity function restricted to types named "Kenneth".
+iden :: (a `IsNamed` "Kenneth") => a -> a
+iden = id
 
 -- | c. Can you think of a less-contrived reason why labelling certain types
 -- might be useful in real-world code?
@@ -129,12 +132,13 @@ instance Float `IsNamed` "Kenneth"
 {- FIVE -}
 
 -- | Here's a fun little class:
-class Omnipresent (r :: Symbol)
+class Omnipresent (r :: Symbol) | -> r where
+  getDown :: (Omnipresent r) => String
 
 -- | Here's a fun little instance:
-instance Omnipresent "Tom!"
-
--- | a. Is there a way to enforce that no other instance of this class can ever
+instance Omnipresent "Tom!" where
+  getDown = "Tom!"
+  
 -- exist? Do we /need/ variables on the left-hand side of a functional
 -- dependency arrow?
 
@@ -162,6 +166,14 @@ data SNat (n :: Nat) where
 
 -- | a. Write a function (probably in a class) that takes an 'SNat' and an
 -- 'HList', and returns the value at the 'SNat''s index within the 'HList'.
+class GetVal (xs :: [Type]) (n :: Nat) (val :: Type) | xs n -> val where
+  getVal :: SNat n -> HList xs -> val
+
+instance GetVal (x : xs) Z x where
+  getVal SZ (HCons x _)   = x
+
+instance GetVal xs n y => GetVal (x : xs) (S n) y where
+  getVal (SS i) (HCons _ xs)  = getVal i xs 
 
 -- | b. Add the appropriate functional dependency.
 
